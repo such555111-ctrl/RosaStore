@@ -267,6 +267,14 @@
   .photo-tile-add:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-dim);}
   .photo-tile-add span{font-size:22px;line-height:1;}
   .photo-tile.uploading{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:10px;}
+  .photo-tile-wrap{display:flex;flex-direction:column;gap:6px;}
+  .photo-color-row{display:flex;align-items:center;gap:6px;background:var(--bg);border:1.5px solid var(--line);border-radius:8px;padding:4px 6px 4px 4px;transition:border-color .2s var(--ease);}
+  .photo-color-row:focus-within{border-color:var(--accent);}
+  .photo-color-hex{-webkit-appearance:none;appearance:none;width:22px;height:22px;flex:0 0 auto;border:1.5px solid var(--line);border-radius:50%;padding:0;background:none;cursor:pointer;overflow:hidden;}
+  .photo-color-hex::-webkit-color-swatch-wrapper{padding:0;border-radius:50%;}
+  .photo-color-hex::-webkit-color-swatch{border:none;border-radius:50%;}
+  .photo-color-name{width:100%;min-width:0;background:none;border:none;color:var(--text);font-family:var(--font-body);font-size:11px;padding:2px 0;outline:none;}
+  .photo-color-name::placeholder{color:var(--muted-dim);}
   .modal-actions{display:flex;gap:10px;margin-top:24px;}
   .modal-actions > *{flex:1;}
   .empty{text-align:center;color:var(--muted);font-size:13px;padding:48px 0;line-height:1.6;}
@@ -411,7 +419,7 @@
 
     <label>Фото товара</label>
     <div class="photo-grid" id="photoGrid"></div>
-    <div class="muted" style="margin-top:6px;">Можно добавить несколько фото и менять порядок стрелками. Первое фото — обложка товара.</div>
+    <div class="muted" style="margin-top:6px;">Можно добавить несколько фото и менять порядок стрелками. Первое фото — обложка товара. Под каждым фото укажите цвет (название и оттенок) — в каталоге под этим фото появится кнопка-цвет, которая переключает покупателя на этот вариант.</div>
     <input type="file" id="photoInput" accept="image/*" multiple style="display:none;">
 
     <label>Без фото — цвет плашки</label>
@@ -531,6 +539,7 @@ let editingId = null;
 let selectedSwatch = 0;
 let selectedBadge = '';
 let uploadedImages = [];
+let uploadedColors = []; // параллельно uploadedImages: {name, hex} для каждого фото
 let editingPromoId = null;
 let selectedPromoType = 'percent';
 let selectedPromoActive = true;
@@ -663,6 +672,7 @@ function renderList(){
         <div class="card-sub">${p.category || '—'} · ${priceLineHTML(p)}${badgeTag}</div>
         <div class="card-sub">Размеры: ${(p.sizes||[]).join(', ')}</div>
         <div class="card-sub">${photoCount ? `Фото: ${photoCount}` : 'Без фото'}</div>
+        ${(p.colors && p.colors.length) ? `<div class="card-sub" style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">Цвета:${p.colors.map(c=>`<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${c.hex};border:1px solid var(--line);" title="${c.name}"></span>`).join('')}</div>` : ''}
         <div class="card-actions">
           <button class="btn-outline btn-icon-label" data-edit="${p.id}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>Изменить</button>
           <button class="btn-danger btn-icon-label" data-del="${p.id}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16"/><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"/><path d="M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/></svg>Удалить</button>
@@ -721,7 +731,7 @@ function renderOrders(){
         </div>
         <span class="status-badge status-${o.status}">${statusLabel(o.status)}</span>
       </div>
-      <div class="order-items">${(o.items||[]).map(i=>`${i.name} (${i.size||'—'}) × ${i.qty}`).join('<br>')}</div>
+      <div class="order-items">${(o.items||[]).map(i=>`${i.name} (${[i.size?`размер ${i.size}`:'', i.color?`цвет ${i.color}`:''].filter(Boolean).join(', ') || '—'}) × ${i.qty}`).join('<br>')}</div>
       ${o.discount ? `<div class="card-sub">Промокод: ${o.promo_code} (−${fmt(o.discount)}) · Сумма товаров: ${fmt(o.subtotal)}</div>` : ''}
       <div class="card-sub">Итого: ${fmt(o.total)}</div>
       <div class="order-contact">
@@ -1052,6 +1062,10 @@ function openModal(id){
   selectedSwatch = p?.swatch || 0;
   selectedBadge = p?.badge || '';
   uploadedImages = (p?.images && p.images.length) ? [...p.images] : (p?.image ? [p.image] : []);
+  uploadedColors = uploadedImages.map(url => {
+    const c = (p?.colors || []).find(c => c.image === url);
+    return c ? { name: c.name, hex: c.hex } : { name: '', hex: '#cfcfcf' };
+  });
   renderSwatchPicker();
   renderBadgePicker();
   renderPhotoGrid();
@@ -1069,20 +1083,38 @@ document.getElementById('addBtn').onclick = () => {
   else openModal(null);
 };
 
+function escapeAttr(s){
+  return String(s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+}
+
 function renderPhotoGrid(){
   const grid = document.getElementById('photoGrid');
-  const tiles = uploadedImages.map((url, i) => `
-    <div class="photo-tile ${i===0?'cover':''}" style="background-image:url('${url}')">
-      <button type="button" class="photo-tile-move left ${i===0?'disabled':''}" data-move="${i}:-1" title="Сдвинуть влево">‹</button>
-      <button type="button" class="photo-tile-move right ${i===uploadedImages.length-1?'disabled':''}" data-move="${i}:1" title="Сдвинуть вправо">›</button>
-      <button type="button" class="photo-tile-remove" data-remove="${i}" title="Удалить">×</button>
+  const tiles = uploadedImages.map((url, i) => {
+    const c = uploadedColors[i] || { name:'', hex:'#cfcfcf' };
+    return `
+    <div class="photo-tile-wrap">
+      <div class="photo-tile ${i===0?'cover':''}" style="background-image:url('${url}')">
+        <button type="button" class="photo-tile-move left ${i===0?'disabled':''}" data-move="${i}:-1" title="Сдвинуть влево">‹</button>
+        <button type="button" class="photo-tile-move right ${i===uploadedImages.length-1?'disabled':''}" data-move="${i}:1" title="Сдвинуть вправо">›</button>
+        <button type="button" class="photo-tile-remove" data-remove="${i}" title="Удалить">×</button>
+      </div>
+      <div class="photo-color-row">
+        <input type="color" class="photo-color-hex" data-idx="${i}" value="${c.hex || '#cfcfcf'}" title="Оттенок кнопки-цвета">
+        <input type="text" class="photo-color-name" data-idx="${i}" placeholder="Цвет, напр. Красный" value="${escapeAttr(c.name)}" maxlength="40">
+      </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
   const addTile = `<div class="photo-tile-add" id="photoAddTile"><span>+</span>Добавить</div>`;
   grid.innerHTML = tiles + addTile;
 
   grid.querySelectorAll('[data-remove]').forEach(btn=>{
-    btn.onclick = () => { uploadedImages.splice(Number(btn.dataset.remove), 1); renderPhotoGrid(); };
+    btn.onclick = () => {
+      const i = Number(btn.dataset.remove);
+      uploadedImages.splice(i, 1);
+      uploadedColors.splice(i, 1);
+      renderPhotoGrid();
+    };
   });
   grid.querySelectorAll('[data-move]').forEach(btn=>{
     btn.onclick = () => {
@@ -1090,7 +1122,22 @@ function renderPhotoGrid(){
       const target = idx + dir;
       if (target < 0 || target >= uploadedImages.length) return;
       [uploadedImages[idx], uploadedImages[target]] = [uploadedImages[target], uploadedImages[idx]];
+      [uploadedColors[idx], uploadedColors[target]] = [uploadedColors[target], uploadedColors[idx]];
       renderPhotoGrid();
+    };
+  });
+  grid.querySelectorAll('.photo-color-hex').forEach(inp=>{
+    inp.oninput = () => {
+      const i = Number(inp.dataset.idx);
+      if (!uploadedColors[i]) uploadedColors[i] = { name:'', hex:'#cfcfcf' };
+      uploadedColors[i].hex = inp.value;
+    };
+  });
+  grid.querySelectorAll('.photo-color-name').forEach(inp=>{
+    inp.oninput = () => {
+      const i = Number(inp.dataset.idx);
+      if (!uploadedColors[i]) uploadedColors[i] = { name:'', hex:'#cfcfcf' };
+      uploadedColors[i].name = inp.value;
     };
   });
   document.getElementById('photoAddTile').onclick = () => document.getElementById('photoInput').click();
@@ -1120,6 +1167,7 @@ document.getElementById('photoInput').addEventListener('change', async (e) => {
       }
       const data = await res.json();
       uploadedImages.push(data.url);
+      uploadedColors.push({ name:'', hex:'#cfcfcf' });
     } catch(err){
       showToast(err.message);
     }
@@ -1142,7 +1190,15 @@ document.getElementById('saveBtn').onclick = async () => {
     return;
   }
 
-  const payload = { name, category, price, old_price: oldPrice, badge: selectedBadge, sizes, desc, swatch: selectedSwatch, images: uploadedImages };
+  const colors = uploadedImages
+    .map((url, i) => {
+      const c = uploadedColors[i];
+      const name = (c?.name || '').trim();
+      return name ? { image: url, name, hex: c.hex || '#cfcfcf' } : null;
+    })
+    .filter(Boolean);
+
+  const payload = { name, category, price, old_price: oldPrice, badge: selectedBadge, sizes, desc, swatch: selectedSwatch, images: uploadedImages, colors };
   const btn = document.getElementById('saveBtn');
   btn.disabled = true;
   try {

@@ -236,6 +236,13 @@
   .pd-price{font-size:16px;color:var(--muted);margin-bottom:18px;font-weight:500;}
   .pd-desc{font-size:14px;line-height:1.8;color:var(--muted);margin-bottom:24px;}
   .label{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;font-weight:500;}
+  .colors{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:28px;}
+  .color-btn{display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:none;cursor:pointer;padding:0;font-family:var(--font-body);}
+  .color-swatch{width:32px;height:32px;border-radius:50%;border:2px solid transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.08);transition:all .2s var(--ease);position:relative;}
+  .color-btn:active .color-swatch{transform:scale(.88);}
+  .color-btn.active .color-swatch{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim);transform:scale(1.06);}
+  .color-name{font-size:10px;color:var(--muted);max-width:56px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:color .2s;}
+  .color-btn.active .color-name{color:var(--accent);}
   .sizes{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:28px;}
   .size-btn{min-width:48px;padding:10px 14px;border:1.5px solid var(--line);background:var(--bg);color:var(--text);font-family:var(--font-body);font-size:13px;border-radius:6px;cursor:pointer;transition:all .2s var(--ease);font-weight:500;}
   .size-btn:active{transform:scale(.9);}
@@ -439,6 +446,8 @@
     <div class="pd-name" id="pdName"></div>
     <div class="pd-price" id="pdPrice"></div>
     <div class="pd-desc" id="pdDesc"></div>
+    <div class="label" id="pdColorLabel" style="display:none;">Цвет</div>
+    <div class="colors" id="pdColors" style="display:none;"></div>
     <div class="label">Размер</div>
     <div class="sizes" id="pdSizes"></div>
     <button class="btn-primary" id="pdAdd">Добавить в корзину</button>
@@ -621,6 +630,7 @@ let appliedPromo = null; // { code, type, value }
 let promoFormOpen = false;
 let activeCategory = 'Все';
 let currentProduct = null;
+let selectedColor = null; // {name, hex, image} — выбранный цвет в карточке товара
 let sortMode = 'default';
 
 // --- избранное (хранится локально на устройстве) -----------------------
@@ -889,6 +899,52 @@ function updateGalleryUI(){
   document.querySelectorAll('#pdDots .pd-dot').forEach((d,idx)=>d.classList.toggle('active', idx===galleryIndex));
   document.getElementById('pdArrowL').style.opacity = galleryIndex===0 ? '.3' : '.95';
   document.getElementById('pdArrowR').style.opacity = galleryIndex===slides.length-1 ? '.3' : '.95';
+  syncColorToSlide();
+}
+
+// --- выбор цвета товара: кнопки под галереей, переключают фото --------
+function renderColors(p){
+  const wrap = document.getElementById('pdColors');
+  const label = document.getElementById('pdColorLabel');
+  const colors = p.colors || [];
+  if (!colors.length){
+    wrap.style.display = 'none';
+    label.style.display = 'none';
+    wrap.innerHTML = '';
+    selectedColor = null;
+    return;
+  }
+  wrap.style.display = '';
+  label.style.display = '';
+  selectedColor = colors[0];
+  wrap.innerHTML = colors.map((c,i) => `
+    <button type="button" class="color-btn ${i===0?'active':''}" data-idx="${i}" title="${c.name}">
+      <span class="color-swatch" style="background:${c.hex}"></span>
+      <span class="color-name">${c.name}</span>
+    </button>
+  `).join('');
+  wrap.querySelectorAll('.color-btn').forEach(btn=>{
+    btn.onclick = () => {
+      const c = colors[Number(btn.dataset.idx)];
+      selectedColor = c;
+      wrap.querySelectorAll('.color-btn').forEach(x=>x.classList.remove('active'));
+      btn.classList.add('active');
+      const slideIdx = galleryImages.indexOf(c.image);
+      if (slideIdx !== -1) goToSlide(slideIdx);
+    };
+  });
+}
+
+// Если пользователь листает галерею свайпом/стрелками, подсвечиваем
+// соответствующую кнопку цвета (если у текущего фото есть цвет).
+function syncColorToSlide(){
+  if (!currentProduct || !currentProduct.colors || !currentProduct.colors.length) return;
+  const url = galleryImages[galleryIndex];
+  const wrap = document.getElementById('pdColors');
+  const idx = currentProduct.colors.findIndex(c => c.image === url);
+  if (idx === -1) return;
+  selectedColor = currentProduct.colors[idx];
+  wrap.querySelectorAll('.color-btn').forEach((b,i)=>b.classList.toggle('active', i===idx));
 }
 
 document.getElementById('pdArrowL').onclick = (e) => { e.stopPropagation(); goToSlide(galleryIndex - 1); };
@@ -930,6 +986,7 @@ document.getElementById('pdArrowR').onclick = (e) => { e.stopPropagation(); goTo
 function openProduct(id){
   currentProduct = PRODUCTS.find(p=>p.id===id);
   const p = currentProduct;
+  renderColors(p);
   renderGallery(p);
   document.getElementById('pdCat').textContent = p.category;
   const pdBadge = document.getElementById('pdBadge');
@@ -1052,9 +1109,10 @@ document.getElementById('pdGallery').addEventListener('click', (e) => {
 
 document.getElementById('pdAdd').onclick = (e) => {
   const size = document.querySelector('#pdSizes .size-btn.active')?.dataset.size || currentProduct.sizes[0];
-  const existing = cart.find(i=>i.id===currentProduct.id && i.size===size);
+  const color = selectedColor ? selectedColor.name : null;
+  const existing = cart.find(i=>i.id===currentProduct.id && i.size===size && i.color===color);
   if (existing) existing.qty += 1;
-  else cart.push({ id: currentProduct.id, name: currentProduct.name, price: currentProduct.price, size, swatch: currentProduct.swatch, images: currentProduct.images, image: currentProduct.image, qty: 1 });
+  else cart.push({ id: currentProduct.id, name: currentProduct.name, price: currentProduct.price, size, color, colorHex: selectedColor ? selectedColor.hex : null, swatch: currentProduct.swatch, images: currentProduct.images, image: (selectedColor ? selectedColor.image : currentProduct.image), qty: 1 });
   updateBadge();
   const btn = e.currentTarget;
   btn.textContent = 'Добавлено ✓';
@@ -1087,7 +1145,7 @@ function renderCart(){
         <div class="cart-thumb" style="border-radius:5px;${media(i)}"></div>
         <div class="cart-info">
           <div class="cart-name">${i.name}</div>
-          <div class="cart-meta">Размер ${i.size} · ${i.qty} шт · ${fmt(i.price*i.qty)}</div>
+          <div class="cart-meta">${i.color ? `Цвет ${i.color} · ` : ''}Размер ${i.size} · ${i.qty} шт · ${fmt(i.price*i.qty)}</div>
           <button class="cart-remove" data-idx="${idx}">Удалить</button>
         </div>
       </div>
@@ -1269,7 +1327,7 @@ function renderOrders(orders){
   }
   listEl.innerHTML = orders.map(o => {
     const date = new Date(o.created_at).toLocaleString('ru-RU', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
-    const itemsText = (o.items||[]).map(i => `${i.name} (${i.size||'—'}) × ${i.qty}`).join('<br>');
+    const itemsText = (o.items||[]).map(i => `${i.name} (${[i.color?`цвет ${i.color}`:'', i.size?`${i.size}`:''].filter(Boolean).join(', ') || '—'}) × ${i.qty}`).join('<br>');
     const canCancel = o.status === 'new';
     return `
       <div class="order-card" data-oid="${o.id}">
@@ -1431,7 +1489,7 @@ async function submitOrder(){
   const discount = appliedPromo ? computePromoDiscount(appliedPromo, subtotal) : 0;
   const payload = {
     name, phone, comment,
-    items: cart.map(i => ({ id: i.id, name: i.name, size: i.size, qty: i.qty, price: i.price })),
+    items: cart.map(i => ({ id: i.id, name: i.name, size: i.size, color: i.color || null, qty: i.qty, price: i.price })),
     total: subtotal - discount,
     promo_code: appliedPromo ? appliedPromo.code : undefined,
     tg_user: tgUser ? { id: tgUser.id, username: tgUser.username } : null,

@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import uuid
 import logging
@@ -42,6 +43,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED_IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
 ALLOWED_BADGES = {"hit", "trend", "sale", "instock"}
 ALLOWED_PROMO_TYPES = {"percent", "fixed"}
+HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}){1,2}$")
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 app = Flask(__name__)
@@ -131,6 +133,38 @@ def sanitize_old_price(raw):
     except (TypeError, ValueError):
         return None
     return v if v > 0 else None
+
+
+def sanitize_colors(raw):
+    """Варианты товара по цвету: [{name, hex, image}, ...].
+    Каждый вариант привязан к одному из загруженных фото товара."""
+    if not isinstance(raw, list):
+        return []
+    result = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        image = str(item.get("image") or "").strip()
+        if not name or not image:
+            continue
+        hex_code = str(item.get("hex") or "").strip()
+        if not HEX_COLOR_RE.match(hex_code):
+            hex_code = "#cccccc"
+        result.append({"name": name[:40], "hex": hex_code, "image": image})
+    return result
+
+
+def format_item_variant(item):
+    """Строка вида «размер M, цвет Красный» для карточки заказа/уведомления."""
+    parts = []
+    size = (item.get("size") or "").strip() if isinstance(item.get("size"), str) else item.get("size")
+    if size:
+        parts.append(f"размер {size}")
+    color = (item.get("color") or "").strip() if isinstance(item.get("color"), str) else item.get("color")
+    if color:
+        parts.append(f"цвет {color}")
+    return ", ".join(parts) if parts else "—"
 
 
 # --- Промокоды -----------------------------------------------------------
@@ -316,7 +350,7 @@ def create_order():
         save_promos(promos)
 
     items_lines = "\n".join(
-        f"· {i.get('name','—')} (размер {i.get('size') or '—'}) × {i.get('qty', 1)}"
+        f"· {i.get('name','—')} ({format_item_variant(i)}) × {i.get('qty', 1)}"
         for i in items
     )
 
@@ -557,6 +591,7 @@ def admin_create_product():
         "desc": (data.get("desc") or "").strip(),
         "images": images,
         "image": images[0] if images else None,
+        "colors": sanitize_colors(data.get("colors")),
     }
     items.append(product)
     save_products(items)
@@ -598,6 +633,8 @@ def admin_update_product(pid):
                 images = sanitize_images(data.get("image"))
                 p["images"] = images
                 p["image"] = images[0] if images else None
+            if "colors" in data:
+                p["colors"] = sanitize_colors(data.get("colors"))
             save_products(items)
             return jsonify(p)
     abort(404, description="Товар не найден")
